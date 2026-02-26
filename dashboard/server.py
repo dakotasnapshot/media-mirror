@@ -178,6 +178,7 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 j for j in state["jobs"]
                 if j["status"] == "done" and j.get("started") and j.get("updated")
             ]
+            inventory = state.get("inventory", {})
             if done_jobs_with_times:
                 try:
                     times = []
@@ -186,14 +187,16 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                         end = datetime.datetime.fromisoformat(j["updated"])
                         times.append((end - start).total_seconds())
                     avg_secs = sum(times) / len(times)
-                    total_done = len([j for j in state["jobs"] if j["status"] in ("done", "skipped")])
-                    total_tracked = len(state["jobs"])
-                    # Estimate total source files (rough — grows as scanner discovers more)
-                    total_failed = len([j for j in state["jobs"] if j["status"] == "failed"])
-                    remaining = max(0, total_tracked - total_done - total_failed)
+                    # Use inventory scan for accurate totals
+                    source_total = inventory.get("source_total", 0)
+                    dest_done = inventory.get("dest_done", 0)
+                    session_done = len([j for j in state["jobs"] if j["status"] in ("done", "skipped")])
+                    total_completed = dest_done + session_done
+                    remaining = max(0, source_total - total_completed) if source_total else 0
                     eta = {
                         "avg_per_file_secs": round(avg_secs),
-                        "completed": total_done,
+                        "source_total": source_total,
+                        "completed": total_completed,
                         "remaining": remaining,
                         "est_remaining_hours": round(remaining * avg_secs / 3600, 1),
                         "est_remaining_days": round(remaining * avg_secs / 86400, 1),

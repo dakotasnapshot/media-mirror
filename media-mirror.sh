@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/config.env"
 
 # Build ffmpeg flags from config
-FFMPEG_VIDEO="-c:v libx264 -crf ${FFMPEG_CRF:-23} -preset ${FFMPEG_PRESET:-medium} -vf scale=-2:${TARGET_HEIGHT:-720}"
+FFMPEG_VIDEO="-c:v libx264 -crf ${FFMPEG_CRF:-23} -preset ${FFMPEG_PRESET:-medium} -threads ${FFMPEG_THREADS:-4} -vf scale=-2:${TARGET_HEIGHT:-720}"
 FFMPEG_AUDIO="-c:a aac -b:a 128k -ac 2"
 FFMPEG_EXTRA="-movflags +faststart -map 0:v:0 -map 0:a:0"
 
@@ -308,6 +308,32 @@ echo "=========================================="
 
 init_state
 echo $$ > "$PID_FILE"
+
+# ─── Initial inventory scan ───────────────────────────────────────────
+echo "[$(date)] Running initial inventory scan..."
+
+SOURCE_TOTAL=$(find "$SOURCE_MOVIES" "$SOURCE_TV" -type f \( \
+    -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.avi" \
+    -o -iname "*.m4v" -o -iname "*.mov" -o -iname "*.wmv" \
+    -o -iname "*.ts" -o -iname "*.flv" -o -iname "*.webm" \
+\) 2>/dev/null | wc -l | tr -d ' ')
+
+DEST_DONE=$(ssh -i "$DEST_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile="$INSTALL_DIR/known_hosts" \
+    "$DEST_HOST" "find '$DEST_MOVIES' '$DEST_TV' -type f 2>/dev/null | wc -l" 2>/dev/null | tr -d ' ')
+DEST_DONE=${DEST_DONE:-0}
+
+echo "[$(date)] Source files: $SOURCE_TOTAL | Already on destination: $DEST_DONE | Remaining: $((SOURCE_TOTAL - DEST_DONE))"
+
+python3 << PYEOF
+import json
+with open('$STATE_FILE','r') as f: state=json.load(f)
+state['inventory'] = {
+    'source_total': $SOURCE_TOTAL,
+    'dest_done': $DEST_DONE,
+    'remaining': $SOURCE_TOTAL - $DEST_DONE
+}
+with open('$STATE_FILE','w') as f: json.dump(state,f)
+PYEOF
 
 cleanup() {
     echo "[$(date)] Shutting down..."

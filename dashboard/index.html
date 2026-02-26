@@ -297,13 +297,18 @@ function render(data) {
         } else {
             etaText = eta.est_remaining_hours + ' hours';
         }
+        const srcTotal = eta.source_total || '?';
+        const completed = eta.completed || 0;
+        const remaining = eta.remaining || 0;
+        const pctTotal = srcTotal > 0 ? Math.round(completed / srcTotal * 100) : 0;
         etaEl.innerHTML =
+            '<div style="display:flex;justify-content:space-between;color:var(--muted)"><span>📚 Total source files</span><span>' + srcTotal.toLocaleString() + '</span></div>' +
+            '<div style="display:flex;justify-content:space-between;color:var(--green)"><span>✅ Completed</span><span>' + completed.toLocaleString() + ' (' + pctTotal + '%)</span></div>' +
+            '<div style="display:flex;justify-content:space-between;color:var(--muted)"><span>📦 Remaining</span><span>' + remaining.toLocaleString() + '</span></div>' +
             '<div style="display:flex;justify-content:space-between;color:var(--muted)"><span>⏱ Avg per file</span><span>' + avgMin + ' min</span></div>' +
-            '<div style="display:flex;justify-content:space-between;color:var(--muted)"><span>📦 Remaining</span><span>' + (eta.remaining || 0) + ' files</span></div>' +
-            '<div style="display:flex;justify-content:space-between;color:var(--accent);font-weight:600"><span>🏁 Est. completion</span><span>~' + etaText + '</span></div>' +
-            (pctDone < 90 ? '<div style="color:var(--muted);font-size:0.8em;margin-top:4px">⚠️ ETA is approximate — updates as more files are discovered</div>' : '');
+            '<div style="display:flex;justify-content:space-between;color:var(--accent);font-weight:600;margin-top:4px"><span>🏁 Est. completion</span><span>~' + etaText + '</span></div>';
     } else {
-        etaEl.innerHTML = '<span style="color:var(--muted)">⏱ Calculating ETA...</span>';
+        etaEl.innerHTML = '<span style="color:var(--muted)">⏱ Scanning library for ETA...</span>';
     }
 
     const cfg = data.config || {};
