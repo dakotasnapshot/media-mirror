@@ -106,6 +106,7 @@ h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 4px; display: inline
         <div class="stat-row"><span class="stat-label">Failed</span><span id="s-failed">—</span></div>
         <div class="stat-row"><span class="stat-label">Skipped</span><span id="s-skipped">—</span></div>
         <div class="progress-wrap"><div class="progress-bar done" id="overall-progress" style="width:0%"></div></div>
+        <div id="eta-info" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:0.85em;"></div>
     </div>
     <div class="card">
         <h2>📁 Source Folders</h2>
@@ -282,7 +283,28 @@ function render(data) {
     document.getElementById('s-skipped').textContent = s.skipped || 0;
     const total = s.total_files || 1;
     const done = (s.transferred || 0) + (s.skipped || 0);
-    document.getElementById('overall-progress').style.width = Math.round(done/total*100) + '%';
+    const pctDone = Math.round(done/total*100);
+    document.getElementById('overall-progress').style.width = pctDone + '%';
+
+    // ETA
+    const eta = data.eta || {};
+    const etaEl = document.getElementById('eta-info');
+    if (eta.avg_per_file_secs) {
+        const avgMin = (eta.avg_per_file_secs / 60).toFixed(1);
+        let etaText = '';
+        if (eta.est_remaining_days >= 1) {
+            etaText = eta.est_remaining_days + ' days';
+        } else {
+            etaText = eta.est_remaining_hours + ' hours';
+        }
+        etaEl.innerHTML =
+            '<div style="display:flex;justify-content:space-between;color:var(--muted)"><span>⏱ Avg per file</span><span>' + avgMin + ' min</span></div>' +
+            '<div style="display:flex;justify-content:space-between;color:var(--muted)"><span>📦 Remaining</span><span>' + (eta.remaining || 0) + ' files</span></div>' +
+            '<div style="display:flex;justify-content:space-between;color:var(--accent);font-weight:600"><span>🏁 Est. completion</span><span>~' + etaText + '</span></div>' +
+            (pctDone < 90 ? '<div style="color:var(--muted);font-size:0.8em;margin-top:4px">⚠️ ETA is approximate — updates as more files are discovered</div>' : '');
+    } else {
+        etaEl.innerHTML = '<span style="color:var(--muted)">⏱ Calculating ETA...</span>';
+    }
 
     const cfg = data.config || {};
     document.getElementById('source-folders').innerHTML =

@@ -330,8 +330,24 @@ fi
 while true; do
     scan_and_process "$SOURCE_MOVIES" "movies"
     scan_and_process "$SOURCE_TV" "tv"
-    echo "[$(date)] Scan complete. Sleeping ${SCAN_INTERVAL}s before next scan..."
-    update_runner "idle"
-    sleep "$SCAN_INTERVAL"
+
+    # Check if there are still unprocessed files (initial bulk sync)
+    PENDING=$(python3 -c "
+import json
+s=json.load(open('$STATE_FILE'))
+done_count=len([j for j in s['jobs'] if j['status'] in ('done','skipped')])
+total=s['stats'].get('total_files',0)
+# If we processed new files this cycle and there are likely more source files, skip sleep
+print('bulk' if done_count < total * 0.95 else 'idle')
+" 2>/dev/null || echo "idle")
+
+    if [ "$PENDING" = "bulk" ]; then
+        echo "[$(date)] Bulk sync in progress — continuing immediately..."
+        sleep 5  # Brief pause to avoid hammering
+    else
+        echo "[$(date)] Scan complete. Sleeping ${SCAN_INTERVAL}s before next scan..."
+        update_runner "idle"
+        sleep "$SCAN_INTERVAL"
+    fi
     update_runner "running"
 done

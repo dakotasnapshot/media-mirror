@@ -172,10 +172,40 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
             recent_done = [j for j in state["jobs"] if j["status"] == "done"][-20:]
             failed = [j for j in state["jobs"] if j["status"] == "failed"]
 
+            # Calculate ETA from completed jobs
+            eta = {}
+            done_jobs_with_times = [
+                j for j in state["jobs"]
+                if j["status"] == "done" and j.get("started") and j.get("updated")
+            ]
+            if done_jobs_with_times:
+                try:
+                    times = []
+                    for j in done_jobs_with_times:
+                        start = datetime.datetime.fromisoformat(j["started"])
+                        end = datetime.datetime.fromisoformat(j["updated"])
+                        times.append((end - start).total_seconds())
+                    avg_secs = sum(times) / len(times)
+                    total_done = len([j for j in state["jobs"] if j["status"] in ("done", "skipped")])
+                    total_tracked = len(state["jobs"])
+                    # Estimate total source files (rough — grows as scanner discovers more)
+                    total_failed = len([j for j in state["jobs"] if j["status"] == "failed"])
+                    remaining = max(0, total_tracked - total_done - total_failed)
+                    eta = {
+                        "avg_per_file_secs": round(avg_secs),
+                        "completed": total_done,
+                        "remaining": remaining,
+                        "est_remaining_hours": round(remaining * avg_secs / 3600, 1),
+                        "est_remaining_days": round(remaining * avg_secs / 86400, 1),
+                    }
+                except Exception:
+                    pass
+
             response = {
                 "runner": state.get("runner", {}),
                 "runner_pid": get_runner_pid(),
                 "stats": state.get("stats", {}),
+                "eta": eta,
                 "active_jobs": active[:50],
                 "recent_done": recent_done,
                 "failed": failed[:20],
