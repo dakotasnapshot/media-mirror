@@ -212,6 +212,13 @@ h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 4px; display: inline
             <span id="crf-val" style="font-size:0.85em;color:var(--accent)">23</span>
         </div>
 
+        <div class="form-group">
+            <label>CPU Usage</label>
+            <input type="range" id="cfg-ffmpeg_threads" min="1" max="12" value="4" oninput="document.getElementById('cpu-val').textContent=Math.round(this.value/12*100)+'% ('+this.value+' threads)'">
+            <span id="cpu-val" style="font-size:0.85em;color:var(--accent)">33% (4 threads)</span>
+            <div class="form-note">Controls ffmpeg encoding threads. Lower = less CPU, slower conversion.</div>
+        </div>
+
         <h3 style="font-size:0.85em;color:var(--muted);margin:12px 0 8px;">Transfer &amp; Behavior</h3>
         <div class="form-row">
             <div class="form-group">
@@ -322,7 +329,8 @@ function render(data) {
         folderRow('🎬', 'Movies', destHost + ':' + (cfg.dest_movies||'?')) +
         folderRow('📺', 'TV Shows', destHost + ':' + (cfg.dest_tv||'?')) +
         folderRow('📡', 'Bandwidth', (cfg.rsync_bwlimit||'?') + ' KB/s') +
-        folderRow('🎞️', 'Resolution', (cfg.target_height||'720') + 'p · CRF ' + (cfg.ffmpeg_crf||'23') + ' · ' + (cfg.ffmpeg_preset||'medium'));
+        folderRow('🎞️', 'Resolution', (cfg.target_height||'720') + 'p · CRF ' + (cfg.ffmpeg_crf||'23') + ' · ' + (cfg.ffmpeg_preset||'medium')) +
+        folderRow('🖥️', 'CPU', Math.round((cfg.ffmpeg_threads||4)/12*100) + '% (' + (cfg.ffmpeg_threads||4) + ' threads)');
 
     // Disks
     const disks = data.disks || {};
@@ -374,12 +382,13 @@ async function runnerAction(action) {
 }
 
 function openSettings() {
-    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','rsync_bwlimit','scan_interval'];
+    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','ffmpeg_threads','rsync_bwlimit','scan_interval'];
     fields.forEach(f => {
         const el = document.getElementById('cfg-' + f);
         if (el) {
             const val = currentConfig[f] || '';
             if (el.tagName === 'SELECT') el.value = val;
+            else if (f === 'ffmpeg_threads') { el.value = val || 4; document.getElementById('cpu-val').textContent = Math.round((val||4)/12*100)+'% ('+(val||4)+' threads)'; }
             else if (el.type === 'range') { el.value = val; document.getElementById('crf-val').textContent = val; }
             else el.value = val;
         }
@@ -393,7 +402,7 @@ function closeSettings() {
 
 async function saveSettings(e) {
     e.preventDefault();
-    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','rsync_bwlimit','scan_interval'];
+    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','ffmpeg_threads','rsync_bwlimit','scan_interval'];
     const payload = {};
     fields.forEach(f => {
         const el = document.getElementById('cfg-' + f);
