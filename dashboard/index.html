@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Media Mirror — Dashboard</title>
+<style>
+:root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9;
+    --accent: #58a6ff; --green: #3fb950; --red: #f85149; --yellow: #d29922;
+    --orange: #db6d28; --purple: #bc8cff; --muted: #8b949e;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', 'Segoe UI', sans-serif; padding: 20px; max-width: 1400px; margin: 0 auto; }
+h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 4px; display: inline-block; }
+.subtitle { color: var(--muted); font-size: 0.85em; margin-bottom: 20px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 20px; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.card h2 { font-size: 0.9em; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+.stat-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; font-size: 0.9em; }
+.stat-value { font-size: 2em; font-weight: 700; }
+.stat-label { font-size: 0.8em; color: var(--muted); }
+
+.badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 0.75em; font-weight: 600; text-transform: uppercase; }
+.badge.running { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge.idle { background: rgba(88,166,255,0.15); color: var(--accent); }
+.badge.paused { background: rgba(210,153,34,0.15); color: var(--yellow); }
+.badge.stopped, .badge.unknown { background: rgba(248,81,73,0.15); color: var(--red); }
+
+.progress-wrap { background: var(--border); border-radius: 6px; height: 8px; overflow: hidden; margin: 6px 0; }
+.progress-bar { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
+.progress-bar.converting { background: linear-gradient(90deg, var(--accent), var(--purple)); }
+.progress-bar.transferring { background: linear-gradient(90deg, var(--green), #2ea043); }
+.progress-bar.done { background: var(--green); }
+.progress-bar.failed { background: var(--red); }
+
+.job-list { max-height: 500px; overflow-y: auto; }
+.job { padding: 10px; border-bottom: 1px solid var(--border); }
+.job:last-child { border-bottom: none; }
+.job-name { font-size: 0.85em; font-weight: 600; word-break: break-all; }
+.job-detail { font-size: 0.75em; color: var(--muted); margin-top: 2px; }
+.job-type { font-size: 0.7em; padding: 1px 6px; border-radius: 8px; background: rgba(88,166,255,0.1); color: var(--accent); }
+.job-type.tv { background: rgba(188,140,255,0.1); color: var(--purple); }
+
+.folder-list { font-size: 0.8em; }
+.folder-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.folder-row:last-child { border-bottom: none; }
+.folder-icon { font-size: 1.2em; }
+.folder-path { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85em; color: var(--accent); word-break: break-all; }
+.folder-label { font-size: 0.7em; color: var(--muted); text-transform: uppercase; }
+
+.disk-bar-wrap { background: var(--border); border-radius: 4px; height: 6px; margin: 4px 0; }
+.disk-bar { height: 100%; border-radius: 4px; background: var(--accent); }
+.disk-bar.warn { background: var(--yellow); }
+.disk-bar.danger { background: var(--red); }
+
+/* Controls */
+.controls { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+.btn { padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--text); cursor: pointer; font-size: 0.82em; transition: all 0.2s; }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.pause { border-color: var(--yellow); color: var(--yellow); }
+.btn.resume { border-color: var(--green); color: var(--green); }
+.btn.danger { border-color: var(--red); color: var(--red); }
+.btn.primary { border-color: var(--accent); color: var(--accent); }
+.btn.success { border-color: var(--green); color: var(--green); background: rgba(63,185,80,0.1); }
+
+/* Settings Modal */
+.modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: flex-start; padding-top: 40px; }
+.modal-overlay.active { display: flex; }
+.modal { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 24px; width: 90%; max-width: 700px; max-height: 85vh; overflow-y: auto; }
+.modal h2 { font-size: 1.2em; color: var(--accent); margin-bottom: 16px; }
+.form-group { margin-bottom: 14px; }
+.form-group label { display: block; font-size: 0.8em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.form-group input, .form-group select { width: 100%; padding: 8px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.9em; font-family: inherit; }
+.form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+.form-note { font-size: 0.75em; color: var(--muted); margin-top: 2px; }
+.toast { position: fixed; bottom: 30px; right: 30px; padding: 12px 20px; border-radius: 8px; background: var(--green); color: #fff; font-size: 0.85em; z-index: 200; display: none; }
+
+@media (max-width: 768px) { .grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<h1>🎬 Media Mirror</h1>
+<p class="subtitle">Automated Media Conversion + Transfer Pipeline · <span id="update-time">—</span></p>
+
+<div class="controls">
+    <button class="btn pause" onclick="togglePause()" id="pause-btn">⏸ Pause</button>
+    <button class="btn primary" onclick="runnerAction('start')">▶ Start</button>
+    <button class="btn danger" onclick="runnerAction('stop')">⏹ Stop</button>
+    <button class="btn" onclick="runnerAction('restart')">🔄 Restart</button>
+    <button class="btn" onclick="openSettings()">⚙️ Settings</button>
+    <span id="runner-status" class="badge idle">—</span>
+    <span id="runner-pid" style="font-size:0.75em;color:var(--muted);margin-left:4px;"></span>
+</div>
+
+<!-- Stats -->
+<div class="grid" id="stats-grid">
+    <div class="card">
+        <h2>📊 Progress</h2>
+        <div class="stat-row"><span class="stat-label">Total Files</span><span id="s-total" class="stat-value">—</span></div>
+        <div class="stat-row"><span class="stat-label">Converted</span><span id="s-converted">—</span></div>
+        <div class="stat-row"><span class="stat-label">Transferred</span><span id="s-transferred">—</span></div>
+        <div class="stat-row"><span class="stat-label">Failed</span><span id="s-failed">—</span></div>
+        <div class="stat-row"><span class="stat-label">Skipped</span><span id="s-skipped">—</span></div>
+        <div class="progress-wrap"><div class="progress-bar done" id="overall-progress" style="width:0%"></div></div>
+    </div>
+    <div class="card">
+        <h2>📁 Source Folders</h2>
+        <div class="folder-list" id="source-folders"></div>
+    </div>
+    <div class="card">
+        <h2>📥 Destination Folders</h2>
+        <div class="folder-list" id="dest-folders"></div>
+    </div>
+</div>
+
+<!-- Disk Usage -->
+<div class="grid">
+    <div class="card" id="disk-card">
+        <h2>💾 Disk Usage</h2>
+        <div id="disk-info"></div>
+    </div>
+</div>
+
+<!-- Active Jobs -->
+<div class="card" style="margin-bottom:16px">
+    <h2>⚡ Active Jobs</h2>
+    <div class="job-list" id="active-jobs"><p class="stat-label">No active jobs</p></div>
+</div>
+
+<!-- Recent + Failed -->
+<div class="grid">
+    <div class="card">
+        <h2>✅ Recently Completed</h2>
+        <div class="job-list" id="done-jobs"><p class="stat-label">None yet</p></div>
+    </div>
+    <div class="card">
+        <h2>❌ Failed</h2>
+        <div class="job-list" id="failed-jobs"><p class="stat-label">None</p></div>
+    </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settings-modal">
+<div class="modal">
+    <h2>⚙️ Settings</h2>
+    <form id="settings-form" onsubmit="saveSettings(event)">
+        <h3 style="font-size:0.85em;color:var(--muted);margin:8px 0;">Source Paths (read-only source)</h3>
+        <div class="form-group">
+            <label>Movies Source</label>
+            <input type="text" id="cfg-source_movies" placeholder="/Volumes/MediaDrive/Movies">
+        </div>
+        <div class="form-group">
+            <label>TV Shows Source</label>
+            <input type="text" id="cfg-source_tv" placeholder="/Volumes/MediaDrive/TV Shows">
+        </div>
+
+        <h3 style="font-size:0.85em;color:var(--muted);margin:12px 0 8px;">Destination</h3>
+        <div class="form-group">
+            <label>Destination Host</label>
+            <input type="text" id="cfg-dest_host" placeholder="user@192.168.1.100">
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Movies Destination</label>
+                <input type="text" id="cfg-dest_movies" placeholder="/Volumes/DestDrive/Movies">
+            </div>
+            <div class="form-group">
+                <label>TV Shows Destination</label>
+                <input type="text" id="cfg-dest_tv" placeholder="/Volumes/DestDrive/TV Shows">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Temp Directory</label>
+                <input type="text" id="cfg-temp_dir" placeholder="/Volumes/TempDrive/media-temp">
+            </div>
+            <div class="form-group">
+                <label>SSH Key Path</label>
+                <input type="text" id="cfg-dest_ssh_key" placeholder="/opt/media-mirror/dest_key">
+            </div>
+        </div>
+
+        <h3 style="font-size:0.85em;color:var(--muted);margin:12px 0 8px;">Encoding</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Target Resolution</label>
+                <select id="cfg-target_height">
+                    <option value="480">480p</option>
+                    <option value="720" selected>720p</option>
+                    <option value="1080">1080p</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Preset</label>
+                <select id="cfg-ffmpeg_preset">
+                    <option value="ultrafast">ultrafast</option>
+                    <option value="fast">fast</option>
+                    <option value="medium" selected>medium</option>
+                    <option value="slow">slow</option>
+                    <option value="veryslow">veryslow</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>CRF (Quality: 18 = near-lossless, 23 = balanced, 28 = smaller)</label>
+            <input type="range" id="cfg-ffmpeg_crf" min="18" max="28" value="23" oninput="document.getElementById('crf-val').textContent=this.value">
+            <span id="crf-val" style="font-size:0.85em;color:var(--accent)">23</span>
+        </div>
+
+        <h3 style="font-size:0.85em;color:var(--muted);margin:12px 0 8px;">Transfer &amp; Behavior</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Bandwidth Limit (KB/s)</label>
+                <input type="number" id="cfg-rsync_bwlimit" value="100000" min="0" step="10000">
+                <div class="form-note">100000 ≈ 800 Mbps · 50000 ≈ 400 Mbps · 0 = unlimited</div>
+            </div>
+            <div class="form-group">
+                <label>Scan Interval (seconds)</label>
+                <input type="number" id="cfg-scan_interval" value="3600" min="60" step="60">
+                <div class="form-note">Time between full library scans</div>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="button" class="btn" onclick="closeSettings()">Cancel</button>
+            <button type="submit" class="btn success">💾 Save &amp; Restart Runner</button>
+        </div>
+    </form>
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let paused = false;
+let currentConfig = {};
+
+async function fetchStatus() {
+    try {
+        const resp = await fetch('/api/status');
+        const data = await resp.json();
+        currentConfig = data.config || {};
+        render(data);
+    } catch (e) {
+        document.getElementById('runner-status').textContent = 'OFFLINE';
+        document.getElementById('runner-status').className = 'badge stopped';
+    }
+}
+
+function shortPath(p) {
+    if (!p) return '—';
+    const parts = p.split('/');
+    if (parts.length > 4) return '…/' + parts.slice(-3).join('/');
+    return p;
+}
+
+function render(data) {
+    document.getElementById('update-time').textContent = new Date(data.timestamp).toLocaleTimeString();
+
+    const runner = data.runner || {};
+    const statusEl = document.getElementById('runner-status');
+    const status = runner.paused ? 'paused' : (runner.status || 'unknown');
+    statusEl.textContent = status.toUpperCase();
+    statusEl.className = 'badge ' + status;
+    paused = runner.paused;
+    const pauseBtn = document.getElementById('pause-btn');
+    if (paused) { pauseBtn.textContent = '▶ Resume'; pauseBtn.className = 'btn resume'; }
+    else { pauseBtn.textContent = '⏸ Pause'; pauseBtn.className = 'btn pause'; }
+
+    const pidEl = document.getElementById('runner-pid');
+    pidEl.textContent = data.runner_pid ? 'PID ' + data.runner_pid : 'not running';
+
+    const s = data.stats || {};
+    document.getElementById('s-total').textContent = s.total_files || 0;
+    document.getElementById('s-converted').textContent = s.converted || 0;
+    document.getElementById('s-transferred').textContent = s.transferred || 0;
+    document.getElementById('s-failed').textContent = s.failed || 0;
+    document.getElementById('s-skipped').textContent = s.skipped || 0;
+    const total = s.total_files || 1;
+    const done = (s.transferred || 0) + (s.skipped || 0);
+    document.getElementById('overall-progress').style.width = Math.round(done/total*100) + '%';
+
+    const cfg = data.config || {};
+    document.getElementById('source-folders').innerHTML =
+        folderRow('🎬', 'Movies', cfg.source_movies) +
+        folderRow('📺', 'TV Shows', cfg.source_tv) +
+        folderRow('⏳', 'Temp Dir', cfg.temp_dir);
+
+    const destHost = cfg.dest_host || '?';
+    document.getElementById('dest-folders').innerHTML =
+        folderRow('🎬', 'Movies', destHost + ':' + (cfg.dest_movies||'?')) +
+        folderRow('📺', 'TV Shows', destHost + ':' + (cfg.dest_tv||'?')) +
+        folderRow('📡', 'Bandwidth', (cfg.rsync_bwlimit||'?') + ' KB/s') +
+        folderRow('🎞️', 'Resolution', (cfg.target_height||'720') + 'p · CRF ' + (cfg.ffmpeg_crf||'23') + ' · ' + (cfg.ffmpeg_preset||'medium'));
+
+    // Disks
+    const disks = data.disks || {};
+    let diskHtml = '';
+    for (const [key, d] of Object.entries(disks)) {
+        const pctNum = parseInt(d.pct);
+        const barClass = pctNum > 90 ? 'danger' : pctNum > 75 ? 'warn' : '';
+        diskHtml += '<div style="margin-bottom:10px"><div class="stat-row"><span class="stat-label">' + d.mount + '</span><span>' + d.used + ' / ' + d.size + ' (' + d.pct + ')</span></div><div class="disk-bar-wrap"><div class="disk-bar ' + barClass + '" style="width:' + d.pct + '"></div></div></div>';
+    }
+    document.getElementById('disk-info').innerHTML = diskHtml || '<p class="stat-label">Loading disk info...</p>';
+
+    // Jobs
+    renderJobs('active-jobs', data.active_jobs || [], 'No active jobs', true);
+    renderJobs('done-jobs', (data.recent_done || []).reverse(), 'None yet', false);
+    renderJobs('failed-jobs', data.failed || [], 'None', false, true);
+}
+
+function folderRow(icon, label, path) {
+    return '<div class="folder-row"><span class="folder-icon">' + icon + '</span><div><div class="folder-label">' + label + '</div><div class="folder-path">' + (path||'—') + '</div></div></div>';
+}
+
+function renderJobs(elId, jobs, emptyMsg, showProgress, isFailed) {
+    const el = document.getElementById(elId);
+    if (!jobs.length) { el.innerHTML = '<p class="stat-label">' + emptyMsg + '</p>'; return; }
+    el.innerHTML = jobs.map(j => {
+        const typeClass = j.media_type === 'tv' ? ' tv' : '';
+        let html = '<div class="job"><span class="job-type' + typeClass + '">' + j.media_type + '</span>';
+        if (showProgress) html += ' <span class="badge ' + j.status + '">' + j.status + '</span>';
+        html += '<div class="job-name">' + shortPath(j.source) + '</div>';
+        if (showProgress) html += '<div class="progress-wrap"><div class="progress-bar ' + j.status + '" style="width:' + j.progress + '%"></div></div>';
+        const detailStyle = isFailed ? ' style="color:var(--red)"' : '';
+        html += '<div class="job-detail"' + detailStyle + '>' + (j.detail || j.updated || '') + '</div></div>';
+        return html;
+    }).join('');
+}
+
+async function togglePause() {
+    await fetch(paused ? '/api/resume' : '/api/pause');
+    fetchStatus();
+}
+
+async function runnerAction(action) {
+    showToast('Sending ' + action + '...');
+    const resp = await fetch('/api/runner/' + action);
+    const data = await resp.json();
+    if (data.ok) showToast('Runner ' + action + ' OK');
+    else showToast('Error: ' + (data.error || 'unknown'), true);
+    setTimeout(fetchStatus, 1500);
+}
+
+function openSettings() {
+    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','rsync_bwlimit','scan_interval'];
+    fields.forEach(f => {
+        const el = document.getElementById('cfg-' + f);
+        if (el) {
+            const val = currentConfig[f] || '';
+            if (el.tagName === 'SELECT') el.value = val;
+            else if (el.type === 'range') { el.value = val; document.getElementById('crf-val').textContent = val; }
+            else el.value = val;
+        }
+    });
+    document.getElementById('settings-modal').classList.add('active');
+}
+
+function closeSettings() {
+    document.getElementById('settings-modal').classList.remove('active');
+}
+
+async function saveSettings(e) {
+    e.preventDefault();
+    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','rsync_bwlimit','scan_interval'];
+    const payload = {};
+    fields.forEach(f => {
+        const el = document.getElementById('cfg-' + f);
+        if (el) payload[f] = el.value;
+    });
+
+    showToast('Saving configuration...');
+    const resp = await fetch('/api/config', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await resp.json();
+    if (data.ok) {
+        showToast('Config saved. Restarting runner...');
+        closeSettings();
+        await fetch('/api/runner/restart');
+        setTimeout(fetchStatus, 3000);
+    } else {
+        showToast('Error: ' + (data.error || 'unknown'), true);
+    }
+}
+
+function showToast(msg, isError) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.background = isError ? 'var(--red)' : 'var(--green)';
+    el.style.display = 'block';
+    clearTimeout(el._timer);
+    el._timer = setTimeout(() => el.style.display = 'none', 3000);
+}
+
+// Click outside modal to close
+document.getElementById('settings-modal').addEventListener('click', e => {
+    if (e.target === document.getElementById('settings-modal')) closeSettings();
+});
+
+fetchStatus();
+setInterval(fetchStatus, 5000);
+</script>
+</body>
+</html>

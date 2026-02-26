@@ -1,0 +1,8 @@
+config.env
+state.json
+logs/
+*.pid
+known_hosts
+pluto_key
+pluto_key.pub
+.DS_Store
