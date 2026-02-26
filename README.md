@@ -22,7 +22,7 @@ Built for macOS. No external dependencies beyond `ffmpeg`, `rsync`, and `python3
 
 ## Screenshot
 
-> *Coming soon*
+![Media Mirror Dashboard](screenshot.png)
 
 ## Requirements
 
