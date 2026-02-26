@@ -318,8 +318,9 @@ SOURCE_TOTAL=$(find "$SOURCE_MOVIES" "$SOURCE_TV" -type f \( \
     -o -iname "*.ts" -o -iname "*.flv" -o -iname "*.webm" \
 \) 2>/dev/null | wc -l | tr -d ' ')
 
+DEST_FIND_CMD="find \"${DEST_MOVIES}\" \"${DEST_TV}\" -type f 2>/dev/null | wc -l"
 DEST_DONE=$(ssh -i "$DEST_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile="$INSTALL_DIR/known_hosts" \
-    "$DEST_HOST" "find '$DEST_MOVIES' '$DEST_TV' -type f 2>/dev/null | wc -l" 2>/dev/null | tr -d ' ')
+    "$DEST_HOST" "$DEST_FIND_CMD" 2>/dev/null | tr -d ' ')
 DEST_DONE=${DEST_DONE:-0}
 
 echo "[$(date)] Source files: $SOURCE_TOTAL | Already on destination: $DEST_DONE | Remaining: $((SOURCE_TOTAL - DEST_DONE))"
