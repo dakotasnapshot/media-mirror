@@ -135,14 +135,28 @@ def start_runner():
 
 
 def stop_runner():
+    # Kill ALL runner processes (not just the PID file one)
     pid = get_runner_pid()
-    if not pid:
-        return {"ok": False, "error": "Runner is not running"}
     try:
-        os.kill(pid, signal.SIGTERM)
-        return {"ok": True, "stopped": pid}
-    except ProcessLookupError:
-        return {"ok": False, "error": "Process not found"}
+        result = subprocess.run(
+            ["pkill", "-9", "-f", os.path.join(INSTALL_DIR, "media-mirror.sh")],
+            capture_output=True, timeout=5
+        )
+    except Exception:
+        pass
+    # Also try the PID file
+    if pid:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    # Clean PID file
+    pid_file = os.path.join(INSTALL_DIR, "runner.pid")
+    try:
+        os.remove(pid_file)
+    except FileNotFoundError:
+        pass
+    return {"ok": True, "stopped": pid or 0}
 
 
 class DashboardHandler(http.server.SimpleHTTPRequestHandler):
