@@ -87,24 +87,25 @@ def get_disk_usage():
         except Exception:
             pass
 
-    # Remote disk (destination)
+    # Remote disks (movies + tv destinations)
     dest_host = config.get("DEST_HOST", "")
     dest_key = config.get("DEST_SSH_KEY", "")
-    dest_movies = config.get("DEST_MOVIES", "")
-    if dest_host and dest_key and dest_movies:
-        try:
-            result = subprocess.run(
-                ["ssh", "-i", dest_key, "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=3",
-                 dest_host, f"df -h '{dest_movies}'"],
-                capture_output=True, text=True, timeout=8
-            )
-            if result.returncode == 0:
-                lines = result.stdout.strip().split("\n")
-                if len(lines) > 1:
-                    parts = lines[1].split()
-                    disks["dest"] = {"mount": f"{dest_host}:{parts[-1]}", "size": parts[1], "used": parts[2], "avail": parts[3], "pct": parts[4]}
-        except Exception:
-            pass
+    for dlabel, dpath_key in [("dest_movies", "DEST_MOVIES"), ("dest_tv", "DEST_TV")]:
+        dpath = config.get(dpath_key, "")
+        if dest_host and dest_key and dpath:
+            try:
+                result = subprocess.run(
+                    ["ssh", "-i", dest_key, "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=3",
+                     dest_host, f"df -h '{dpath}'"],
+                    capture_output=True, text=True, timeout=8
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split("\n")
+                    if len(lines) > 1:
+                        parts = lines[1].split()
+                        disks[dlabel] = {"mount": f"{dest_host}:{parts[-1]}", "size": parts[1], "used": parts[2], "avail": parts[3], "pct": parts[4]}
+            except Exception:
+                pass
     return disks
 
 

@@ -148,7 +148,7 @@ h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 4px; display: inline
 <div class="modal-overlay" id="settings-modal">
 <div class="modal">
     <h2>⚙️ Settings</h2>
-    <form id="settings-form" onsubmit="saveSettings(event)">
+    <form id="settings-form" onsubmit="saveSettings(event); return false;">
         <h3 style="font-size:0.85em;color:var(--muted);margin:8px 0;">Source Paths (read-only source)</h3>
         <div class="form-group">
             <label>Movies Source</label>
@@ -228,14 +228,14 @@ h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 4px; display: inline
             </div>
             <div class="form-group">
                 <label>Scan Interval (seconds)</label>
-                <input type="number" id="cfg-scan_interval" value="3600" min="60" step="60">
+                <input type="number" id="cfg-scan_interval" value="3600" min="5" step="60">
                 <div class="form-note">Time between full library scans</div>
             </div>
         </div>
 
         <div class="form-actions">
             <button type="button" class="btn" onclick="closeSettings()">Cancel</button>
-            <button type="submit" class="btn success">💾 Save &amp; Restart Runner</button>
+            <button type="button" class="btn success" onclick="saveSettings(event)">💾 Save &amp; Restart Runner</button>
         </div>
     </form>
 </div>
@@ -338,7 +338,9 @@ function render(data) {
     for (const [key, d] of Object.entries(disks)) {
         const pctNum = parseInt(d.pct);
         const barClass = pctNum > 90 ? 'danger' : pctNum > 75 ? 'warn' : '';
-        diskHtml += '<div style="margin-bottom:10px"><div class="stat-row"><span class="stat-label">' + d.mount + '</span><span>' + d.used + ' / ' + d.size + ' (' + d.pct + ')</span></div><div class="disk-bar-wrap"><div class="disk-bar ' + barClass + '" style="width:' + d.pct + '"></div></div></div>';
+        const labels = {"source": "Source", "temp": "Temp", "dest_movies": "Dest Movies (NVMe)", "dest_tv": "Dest TV Shows"};
+        const label = labels[key] || key;
+        diskHtml += '<div style="margin-bottom:10px"><div class="stat-row"><span class="stat-label">' + label + ' (' + d.mount + ')</span><span>' + d.used + ' / ' + d.size + ' (' + d.pct + ')</span></div><div class="disk-bar-wrap"><div class="disk-bar ' + barClass + '" style="width:' + d.pct + '"></div></div></div>';
     }
     document.getElementById('disk-info').innerHTML = diskHtml || '<p class="stat-label">Loading disk info...</p>';
 
