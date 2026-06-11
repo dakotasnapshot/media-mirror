@@ -12,11 +12,13 @@ Built for macOS. No external dependencies beyond `ffmpeg`, `rsync`, and `python3
 
 - **Perpetual sync** — continuously watches for new media and processes it
 - **Smart encoding** — skips re-encoding files already at or below the target resolution
+- **Pre-flight size estimate** — projects the converted mirror's total size *before* encoding anything and tells you whether it fits the destination (per-file, from duration × target bitrate; copy-through files counted at real size)
+- **Adaptive resolution** — when the destination drive runs low, automatically steps the encode resolution down a ladder (e.g. 720p → 480p → 360p) so the rest of the library still fits, instead of failing
 - **Resumable transfers** — uses `rsync --partial` so interrupted transfers resume, not restart
 - **Bandwidth limiting** — configurable transfer speed cap to avoid saturating your network
-- **Web dashboard** — real-time progress, disk usage, source/destination paths, active jobs
+- **Web dashboard** — real-time progress, disk usage, projected size, source/destination paths, active jobs
 - **Full control panel** — start/stop/restart the runner, pause/resume, edit all settings from the browser
-- **Configurable** — resolution, quality (CRF), encoder preset, bandwidth, scan interval — all changeable live
+- **Configurable** — resolution, quality (CRF), encoder preset, bandwidth, scan interval, adaptive ladder — all changeable live
 - **Failure recovery** — failed jobs automatically retry on the next scan cycle
 - **Read-only source** — source files are never modified; conversion happens in a temp directory
 
@@ -69,9 +71,38 @@ All settings live in `/opt/media-mirror/config.env`. You can also edit them from
 | `TARGET_HEIGHT` | `720` | Target resolution height (720 = 720p) |
 | `FFMPEG_CRF` | `23` | Quality factor (18 = best, 28 = smallest) |
 | `FFMPEG_PRESET` | `medium` | Encoder speed/quality tradeoff |
+| `ADAPTIVE_RESOLUTION` | `1` | Auto step resolution down when the destination fills (`0` to disable) |
+| `RESOLUTION_LADDER` | `1080 720 480 360 240` | Heights to step down through (only rungs ≤ `TARGET_HEIGHT` are used) |
+| `MIN_DEST_FREE_GB` | `20` | Step down a rung when destination free space drops below this |
 | `RSYNC_BWLIMIT` | `100000` | Transfer bandwidth limit in KB/s |
 | `SCAN_INTERVAL` | `3600` | Seconds between full library scans |
 | `DASHBOARD_PORT` | `8080` | Web dashboard port |
+
+## Estimating mirror size up front
+
+Before kicking off a long run you can project how much space the converted
+library will take on the destination — and whether it fits:
+
+```bash
+python3 estimate_size.py            # uses /opt/media-mirror/config.env
+python3 estimate_size.py --target 480   # preview a different resolution
+```
+
+The runner also computes this automatically on startup (shown on the dashboard
+as **Projected Mirror Size**), and the dashboard's **Re-estimate** button reruns
+it on demand. Files already at/below the target are counted at their real size
+(they're copied, not re-encoded); everything else is estimated from its duration
+and the target bitrate.
+
+## Adaptive resolution
+
+If the destination drive fills before the mirror finishes, Media Mirror steps
+the encode resolution **down** one rung on the ladder (e.g. 720p → 480p) so the
+remaining files are smaller and still fit, rather than failing on "no space left
+on device". The current effective resolution is shown on the dashboard, and a
+downstep is also triggered if a transfer fails with an out-of-space error. The
+source is never touched and already-transferred files are left as-is; only
+not-yet-encoded files are affected.
 
 ## Web Dashboard
 

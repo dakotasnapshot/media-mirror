@@ -71,9 +71,10 @@ echo "  ✅ $INSTALL_DIR"
 echo ""
 echo "[3/6] Copying files..."
 cp "$SCRIPT_DIR/media-mirror.sh" "$INSTALL_DIR/"
+cp "$SCRIPT_DIR/estimate_size.py" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/dashboard/server.py" "$INSTALL_DIR/dashboard/"
 cp "$SCRIPT_DIR/dashboard/index.html" "$INSTALL_DIR/dashboard/"
-chmod +x "$INSTALL_DIR/media-mirror.sh"
+chmod +x "$INSTALL_DIR/media-mirror.sh" "$INSTALL_DIR/estimate_size.py"
 
 # Copy config if it doesn't already exist
 if [ ! -f "$INSTALL_DIR/config.env" ]; then

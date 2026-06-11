@@ -9,10 +9,20 @@ export PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/config.env"
 
-# Build ffmpeg flags from config
-FFMPEG_VIDEO="-c:v libx264 -crf ${FFMPEG_CRF:-23} -preset ${FFMPEG_PRESET:-medium} -threads ${FFMPEG_THREADS:-4} -vf scale=-2:${TARGET_HEIGHT:-720}"
+# Build ffmpeg flags from config. The video filter is built per-file so the
+# effective height can adapt down as the destination fills (see below).
 FFMPEG_AUDIO="-c:a aac -b:a 128k -ac 2"
 FFMPEG_EXTRA="-movflags +faststart -map 0:v:0 -map 0:a:0"
+
+build_video_flags() {
+    local height="$1"
+    echo "-c:v libx264 -crf ${FFMPEG_CRF:-23} -preset ${FFMPEG_PRESET:-medium} -threads ${FFMPEG_THREADS:-4} -vf scale=-2:${height}"
+}
+
+# Adaptive-resolution defaults (config may override)
+ADAPTIVE_RESOLUTION="${ADAPTIVE_RESOLUTION:-1}"
+RESOLUTION_LADDER="${RESOLUTION_LADDER:-1080 720 480 360 240}"
+MIN_DEST_FREE_GB="${MIN_DEST_FREE_GB:-20}"
 
 # Parse flags
 RUN_ONCE=false
@@ -111,6 +121,91 @@ dest_exists() {
         "$DEST_HOST" "test -f \"${dest_base}/${out_name}\"" 2>/dev/null
 }
 
+# ─── Adaptive resolution ──────────────────────────────────────────────
+# As the destination drive fills, step the encode height DOWN through
+# RESOLUTION_LADDER so the remaining library still fits. The current effective
+# height lives in state.json so it is sticky across files and visible in the UI.
+
+dest_free_gb() {
+    # Free whole-GB on the destination mount for the given path. Echoes a large
+    # number on failure so a transient SSH hiccup never triggers a needless
+    # downstep.
+    local dest_path="$1"
+    local kb
+    kb=$(ssh -i "$DEST_SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+            -o UserKnownHostsFile="$INSTALL_DIR/known_hosts" \
+            "$DEST_HOST" "df -k '$dest_path' 2>/dev/null | awk 'NR==2{print \$4}'" 2>/dev/null || true)
+    if [ -n "$kb" ] && [[ "$kb" =~ ^[0-9]+$ ]]; then
+        echo $(( kb / 1024 / 1024 ))
+    else
+        echo 999999
+    fi
+}
+
+get_effective_height() {
+    python3 -c "
+import json
+try:
+    s=json.load(open('$STATE_FILE'))
+    print(s.get('runner',{}).get('effective_height') or ${TARGET_HEIGHT:-720})
+except Exception:
+    print(${TARGET_HEIGHT:-720})
+" 2>/dev/null || echo "${TARGET_HEIGHT:-720}"
+}
+
+set_effective_height() {
+    local height="$1"
+    python3 -c "
+import json
+s=json.load(open('$STATE_FILE'))
+s.setdefault('runner',{})['effective_height']=int($height)
+s['runner']['target_height']=int(${TARGET_HEIGHT:-720})
+json.dump(s,open('$STATE_FILE','w'))
+" 2>/dev/null || true
+}
+
+# Echo the next rung at or below the given height; if none lower exists, echo
+# the same height. Only rungs <= TARGET_HEIGHT are considered.
+ladder_below() {
+    local current="$1"
+    local target="${TARGET_HEIGHT:-720}"
+    local best=""
+    for rung in $RESOLUTION_LADDER; do
+        # eligible rungs are strictly below current AND <= configured target
+        if [ "$rung" -lt "$current" ] && [ "$rung" -le "$target" ]; then
+            if [ -z "$best" ] || [ "$rung" -gt "$best" ]; then
+                best="$rung"
+            fi
+        fi
+    done
+    if [ -n "$best" ]; then echo "$best"; else echo "$current"; fi
+}
+
+# If adaptive mode is on and the destination is below the free-space floor,
+# drop to the next-lower ladder rung. Returns the (possibly new) effective height.
+maybe_downstep() {
+    local dest_base="$1"
+    local effective
+    effective=$(get_effective_height)
+    if [ "${ADAPTIVE_RESOLUTION:-1}" != "1" ]; then
+        echo "$effective"; return 0
+    fi
+    local free_gb
+    free_gb=$(dest_free_gb "$dest_base")
+    if [ "$free_gb" -lt "${MIN_DEST_FREE_GB:-20}" ]; then
+        local lower
+        lower=$(ladder_below "$effective")
+        if [ "$lower" -lt "$effective" ]; then
+            echo "[$(date)] Destination low (${free_gb}GB free < ${MIN_DEST_FREE_GB}GB) — dropping encode resolution ${effective}p → ${lower}p" >&2
+            set_effective_height "$lower"
+            effective="$lower"
+        else
+            echo "[$(date)] Destination low (${free_gb}GB free) but already at lowest ladder rung (${effective}p)" >&2
+        fi
+    fi
+    echo "$effective"
+}
+
 # ─── Convert ──────────────────────────────────────────────────────────
 
 convert_file() {
@@ -139,11 +234,16 @@ convert_file() {
         return $?
     fi
 
-    # Check source resolution — skip encoding if already <= target
+    # Determine the effective target height for THIS file, stepping down first
+    # if the destination is running low on space.
+    local target_height
+    target_height=$(maybe_downstep "$dest_base")
+
+    # Check source resolution — skip encoding if already <= effective target
     local src_height
     src_height=$(ffmpeg -i "$source_file" 2>&1 | grep "Video:" | head -1 | grep -oE "[0-9]+x[0-9]+" | head -1 | cut -d"x" -f2)
 
-    if [ -n "$src_height" ] && [ "$src_height" -le "${TARGET_HEIGHT:-720}" ] 2>/dev/null; then
+    if [ -n "$src_height" ] && [ "$src_height" -le "$target_height" ] 2>/dev/null; then
         update_job "$source_file" "$media_type" "converting" 50 "Already ${src_height}p — copying without re-encode"
         cp "$source_file" "$temp_out"
         update_job "$source_file" "$media_type" "transferring" 50 "Copy complete, starting transfer"
@@ -151,15 +251,18 @@ convert_file() {
         return $?
     fi
 
-    update_job "$source_file" "$media_type" "converting" 0 "Starting ${src_height:-?}p → ${TARGET_HEIGHT:-720}p conversion"
+    update_job "$source_file" "$media_type" "converting" 0 "Starting ${src_height:-?}p → ${target_height}p conversion"
 
     local duration
     duration=$(ffmpeg -i "$source_file" 2>&1 | grep "Duration" | head -1 | sed 's/.*Duration: \([^,]*\).*/\1/' | awk -F: '{print ($1*3600)+($2*60)+$3}')
     [ -z "$duration" ] || [ "$duration" = "0" ] && duration=1
 
+    local ffmpeg_video
+    ffmpeg_video=$(build_video_flags "$target_height")
+
     ffmpeg -hide_banner -nostdin -y \
         -i "$source_file" \
-        $FFMPEG_VIDEO $FFMPEG_AUDIO $FFMPEG_EXTRA \
+        $ffmpeg_video $FFMPEG_AUDIO $FFMPEG_EXTRA \
         -progress pipe:1 \
         "$temp_out" > "$log_file.progress" 2>"$log_file" &
 
@@ -259,6 +362,25 @@ transfer_file() {
     local exit_code=$?
 
     if [ $exit_code -ne 0 ]; then
+        # Out-of-space on the destination: force a resolution downstep so the
+        # next cycle re-encodes this (and subsequent) files smaller. Discard the
+        # too-large temp output so it is regenerated at the lower resolution.
+        if grep -qiE "No space left on device|write error.*disk|errno 28" "$log_file" 2>/dev/null; then
+            if [ "${ADAPTIVE_RESOLUTION:-1}" = "1" ]; then
+                local cur lower
+                cur=$(get_effective_height)
+                lower=$(ladder_below "$cur")
+                if [ "$lower" -lt "$cur" ]; then
+                    set_effective_height "$lower"
+                    echo "[$(date)] Destination full during transfer — dropping resolution ${cur}p → ${lower}p; will re-encode next cycle" >&2
+                fi
+                rm -f "$local_file"
+                update_job "$source_file" "$media_type" "failed" 0 "Destination full — will retry at lower resolution"
+                return 1
+            fi
+            update_job "$source_file" "$media_type" "failed" 50 "Destination full (no space left on device)"
+            return 1
+        fi
         update_job "$source_file" "$media_type" "failed" 50 "Transfer failed (exit $exit_code)"
         return 1
     fi
@@ -316,24 +438,63 @@ SOURCE_TOTAL=$(find "$SOURCE_MOVIES" "$SOURCE_TV" -type f \( \
     -iname "*.mp4" -o -iname "*.mkv" -o -iname "*.avi" \
     -o -iname "*.m4v" -o -iname "*.mov" -o -iname "*.wmv" \
     -o -iname "*.ts" -o -iname "*.flv" -o -iname "*.webm" \
-\) 2>/dev/null | wc -l | tr -d ' ')
+\) 2>/dev/null | wc -l | tr -d ' ' || true)
+SOURCE_TOTAL=${SOURCE_TOTAL:-0}
 
 DEST_FIND_CMD="find \"${DEST_MOVIES}\" \"${DEST_TV}\" -type f 2>/dev/null | wc -l"
-DEST_DONE=$(ssh -i "$DEST_SSH_KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile="$INSTALL_DIR/known_hosts" \
-    "$DEST_HOST" "$DEST_FIND_CMD" 2>/dev/null | tr -d ' ')
+# Tolerate an unreachable/erroring destination here — a failed count must not
+# abort the whole run (set -e + pipefail would otherwise kill it on SSH exit 255).
+DEST_DONE=$(ssh -i "$DEST_SSH_KEY" -o StrictHostKeyChecking=no -o ConnectTimeout=8 \
+    -o UserKnownHostsFile="$INSTALL_DIR/known_hosts" \
+    "$DEST_HOST" "$DEST_FIND_CMD" 2>/dev/null | tr -d ' ' || true)
 DEST_DONE=${DEST_DONE:-0}
+[[ "$DEST_DONE" =~ ^[0-9]+$ ]] || DEST_DONE=0
 
 echo "[$(date)] Source files: $SOURCE_TOTAL | Already on destination: $DEST_DONE | Remaining: $((SOURCE_TOTAL - DEST_DONE))"
+
+# ─── Pre-flight size estimate ─────────────────────────────────────────
+# Estimate how much space the converted mirror will need on the destination
+# BEFORE encoding anything, and whether it will fit. Best-effort: a failure
+# here never blocks the run.
+echo "[$(date)] Estimating projected mirror size (this may take a moment for large libraries)..."
+SIZE_JSON=$(CONFIG_FILE="$SCRIPT_DIR/config.env" python3 "$SCRIPT_DIR/estimate_size.py" \
+    --config "$SCRIPT_DIR/config.env" --target "${TARGET_HEIGHT:-720}" --json 2>/dev/null || echo '')
 
 python3 << PYEOF
 import json
 with open('$STATE_FILE','r') as f: state=json.load(f)
-state['inventory'] = {
+inv = {
     'source_total': $SOURCE_TOTAL,
     'dest_done': $DEST_DONE,
-    'remaining': $SOURCE_TOTAL - $DEST_DONE
+    'remaining': $SOURCE_TOTAL - $DEST_DONE,
 }
+raw = '''$SIZE_JSON'''.strip()
+if raw:
+    try:
+        est = json.loads(raw)
+        inv['estimated_bytes'] = est.get('estimated_bytes')
+        inv['estimated_human'] = est.get('estimated_human')
+        inv['source_bytes'] = est.get('source_bytes')
+        inv['dest_free_bytes'] = est.get('dest_free_bytes')
+        inv['dest_free_human'] = est.get('dest_free_human')
+        inv['fits'] = est.get('fits')
+        inv['headroom_bytes'] = est.get('headroom_bytes')
+        inv['estimate_target_height'] = est.get('target_height')
+    except Exception:
+        pass
+state['inventory'] = inv
+# Effective height is sticky across runs (don't bounce resolution back up when
+# space frees), but never exceed the configured target — so lowering
+# TARGET_HEIGHT in config still takes effect immediately.
+_target = int(${TARGET_HEIGHT:-720})
+_eff = state.get('runner', {}).get('effective_height') or _target
+state.setdefault('runner', {})['effective_height'] = min(int(_eff), _target)
+state['runner']['target_height'] = _target
 with open('$STATE_FILE','w') as f: json.dump(state,f)
+if inv.get('estimated_human'):
+    fit = inv.get('fits')
+    verdict = 'FITS' if fit else ('WILL NOT FIT' if fit is False else 'dest free unknown')
+    print(f"[estimate] Projected mirror: {inv['estimated_human']} | Dest free: {inv.get('dest_free_human','unknown')} | {verdict}")
 PYEOF
 
 cleanup() {

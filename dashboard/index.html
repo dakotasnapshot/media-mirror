@@ -118,11 +118,18 @@ h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 4px; display: inline
     </div>
 </div>
 
-<!-- Disk Usage -->
+<!-- Disk Usage + Projected Size -->
 <div class="grid">
     <div class="card" id="disk-card">
         <h2>💾 Disk Usage</h2>
         <div id="disk-info"></div>
+    </div>
+    <div class="card" id="size-card">
+        <h2>📐 Projected Mirror Size
+            <button class="btn" style="float:right;font-size:0.7em;padding:2px 8px" onclick="reEstimate()" id="estimate-btn">Re-estimate</button>
+        </h2>
+        <div id="size-info"><p class="stat-label">Not yet estimated</p></div>
+        <div id="resolution-info" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:0.85em;"></div>
     </div>
 </div>
 
@@ -219,6 +226,28 @@ h1 { color: var(--accent); font-size: 1.6em; margin-bottom: 4px; display: inline
             <div class="form-note">Controls ffmpeg encoding threads. Lower = less CPU, slower conversion.</div>
         </div>
 
+        <h3 style="font-size:0.85em;color:var(--muted);margin:12px 0 8px;">Adaptive Resolution</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Auto-shrink when destination fills</label>
+                <select id="cfg-adaptive_resolution">
+                    <option value="1" selected>Enabled</option>
+                    <option value="0">Disabled</option>
+                </select>
+                <div class="form-note">Steps resolution down a rung when the drive runs low so the rest still fits.</div>
+            </div>
+            <div class="form-group">
+                <label>Min destination free (GB)</label>
+                <input type="number" id="cfg-min_dest_free_gb" value="20" min="1" step="1">
+                <div class="form-note">Trigger a downstep below this much free space.</div>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Resolution Ladder (high → low)</label>
+            <input type="text" id="cfg-resolution_ladder" value="1080 720 480 360 240">
+            <div class="form-note">Space-separated heights to step down through (only rungs ≤ target are used).</div>
+        </div>
+
         <h3 style="font-size:0.85em;color:var(--muted);margin:12px 0 8px;">Transfer &amp; Behavior</h3>
         <div class="form-row">
             <div class="form-group">
@@ -266,7 +295,76 @@ function shortPath(p) {
     return p;
 }
 
+function humanBytes(n) {
+    if (n === null || n === undefined) return 'unknown';
+    const u = ['B','KB','MB','GB','TB','PB']; let f = n, i = 0;
+    while (f >= 1024 && i < u.length-1) { f /= 1024; i++; }
+    return f.toFixed(1) + ' ' + u[i];
+}
+
+function renderSize(inv, res) {
+    const el = document.getElementById('size-info');
+    const est = inv.estimated_bytes;
+    if (est === null || est === undefined) {
+        el.innerHTML = '<span style="color:var(--muted)">Run a scan or click Re-estimate to project the mirror size.</span>';
+    } else {
+        const estH = inv.estimated_human || humanBytes(est);
+        const freeH = inv.dest_free_human || 'unknown';
+        let verdict = '';
+        if (inv.fits === true) {
+            verdict = '<span style="color:var(--green);font-weight:600">✅ Fits — headroom ' + humanBytes(inv.headroom_bytes) + '</span>';
+        } else if (inv.fits === false && inv.dest_free_bytes) {
+            const over = (inv.headroom_bytes !== null && inv.headroom_bytes !== undefined) ? humanBytes(Math.abs(inv.headroom_bytes)) : '?';
+            verdict = '<span style="color:var(--red);font-weight:600">⚠️ Will not fit — short by ' + over + (res.adaptive ? ' (adaptive resolution will shrink it)' : '') + '</span>';
+        } else {
+            verdict = '<span style="color:var(--muted)">Destination free space unknown</span>';
+        }
+        el.innerHTML =
+            '<div style="display:flex;justify-content:space-between"><span class="stat-label">Projected mirror</span><span style="font-weight:600">' + estH + '</span></div>' +
+            '<div style="display:flex;justify-content:space-between"><span class="stat-label">Destination free</span><span>' + freeH + '</span></div>' +
+            '<div style="margin-top:6px">' + verdict + '</div>';
+    }
+
+    const rEl = document.getElementById('resolution-info');
+    const tgt = res.target_height, eff = res.effective_height;
+    if (eff === undefined || eff === null) { rEl.innerHTML = ''; return; }
+    if (res.downstepped) {
+        rEl.innerHTML = '<span style="color:var(--accent);font-weight:600">📉 Adaptive: encoding at ' + eff + 'p</span>' +
+            '<span style="color:var(--muted)"> (stepped down from ' + tgt + 'p to fit the destination)</span>';
+    } else {
+        rEl.innerHTML = '<span style="color:var(--muted)">🎞️ Encoding at ' + eff + 'p' +
+            (res.adaptive ? ' · adaptive ready (steps down if the drive fills)' : ' · fixed resolution') + '</span>';
+    }
+}
+
+async function reEstimate() {
+    const btn = document.getElementById('estimate-btn');
+    const el = document.getElementById('size-info');
+    btn.disabled = true; btn.textContent = 'Estimating…';
+    el.innerHTML = '<span style="color:var(--muted)">Probing library… (may take a while for large libraries)</span>';
+    try {
+        const r = await fetch('/api/estimate');
+        const d = await r.json();
+        if (d.estimated_bytes !== undefined) {
+            renderSize({
+                estimated_bytes: d.estimated_bytes, estimated_human: d.estimated_human,
+                dest_free_bytes: d.dest_free_bytes, dest_free_human: d.dest_free_human,
+                fits: d.fits, headroom_bytes: d.headroom_bytes,
+            }, currentResolution);
+        } else {
+            el.innerHTML = '<span style="color:var(--red)">Estimate failed: ' + (d.error || 'unknown') + '</span>';
+        }
+    } catch (e) {
+        el.innerHTML = '<span style="color:var(--red)">Estimate error: ' + e.message + '</span>';
+    } finally {
+        btn.disabled = false; btn.textContent = 'Re-estimate';
+    }
+}
+
+let currentResolution = {};
+
 function render(data) {
+    currentResolution = data.resolution || {};
     document.getElementById('update-time').textContent = new Date(data.timestamp).toLocaleTimeString();
 
     const runner = data.runner || {};
@@ -317,6 +415,9 @@ function render(data) {
     } else {
         etaEl.innerHTML = '<span style="color:var(--muted)">⏱ Scanning library for ETA...</span>';
     }
+
+    // Projected mirror size (pre-flight estimate) + adaptive resolution status
+    renderSize(data.inventory || {}, data.resolution || {});
 
     const cfg = data.config || {};
     document.getElementById('source-folders').innerHTML =
@@ -384,7 +485,7 @@ async function runnerAction(action) {
 }
 
 function openSettings() {
-    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','ffmpeg_threads','rsync_bwlimit','scan_interval'];
+    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','ffmpeg_threads','rsync_bwlimit','scan_interval','adaptive_resolution','resolution_ladder','min_dest_free_gb'];
     fields.forEach(f => {
         const el = document.getElementById('cfg-' + f);
         if (el) {
@@ -404,7 +505,7 @@ function closeSettings() {
 
 async function saveSettings(e) {
     e.preventDefault();
-    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','ffmpeg_threads','rsync_bwlimit','scan_interval'];
+    const fields = ['source_movies','source_tv','dest_host','dest_movies','dest_tv','temp_dir','dest_ssh_key','target_height','ffmpeg_preset','ffmpeg_crf','ffmpeg_threads','rsync_bwlimit','scan_interval','adaptive_resolution','resolution_ladder','min_dest_free_gb'];
     const payload = {};
     fields.forEach(f => {
         const el = document.getElementById('cfg-' + f);

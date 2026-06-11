@@ -205,11 +205,23 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                 except Exception:
                     pass
 
+            runner = state.get("runner", {})
             response = {
-                "runner": state.get("runner", {}),
+                "runner": runner,
                 "runner_pid": get_runner_pid(),
                 "stats": state.get("stats", {}),
                 "eta": eta,
+                "inventory": inventory,
+                "resolution": {
+                    "target_height": runner.get("target_height", config.get("TARGET_HEIGHT", "720")),
+                    "effective_height": runner.get("effective_height", config.get("TARGET_HEIGHT", "720")),
+                    "adaptive": config.get("ADAPTIVE_RESOLUTION", "1") == "1",
+                    "downstepped": (
+                        runner.get("effective_height") is not None
+                        and runner.get("target_height") is not None
+                        and int(runner.get("effective_height")) < int(runner.get("target_height"))
+                    ),
+                },
                 "active_jobs": active[:50],
                 "recent_done": recent_done,
                 "failed": failed[:20],
@@ -229,6 +241,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     "rsync_bwlimit": config.get("RSYNC_BWLIMIT", "100000"),
                     "scan_interval": config.get("SCAN_INTERVAL", "3600"),
                     "dashboard_port": config.get("DASHBOARD_PORT", "8080"),
+                    "adaptive_resolution": config.get("ADAPTIVE_RESOLUTION", "1"),
+                    "resolution_ladder": config.get("RESOLUTION_LADDER", "1080 720 480 360 240"),
+                    "min_dest_free_gb": config.get("MIN_DEST_FREE_GB", "20"),
                 },
                 "timestamp": datetime.datetime.now().isoformat(),
             }
@@ -237,6 +252,24 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
 
         elif parsed.path == "/api/config":
             self._json_response(200, read_config())
+
+        elif parsed.path == "/api/estimate":
+            # Recompute the projected mirror size on demand. Honors an optional
+            # ?target=NNN override so you can preview a different resolution.
+            qs = urllib.parse.parse_qs(parsed.query)
+            target = qs.get("target", [None])[0]
+            cmd = ["python3", os.path.join(INSTALL_DIR, "estimate_size.py"),
+                   "--config", CONFIG_FILE, "--json"]
+            if target:
+                cmd += ["--target", str(int(target))]
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+                if result.returncode == 0 and result.stdout.strip():
+                    self._json_response(200, json.loads(result.stdout))
+                else:
+                    self._json_response(500, {"ok": False, "error": result.stderr[-500:] or "estimate failed"})
+            except Exception as e:
+                self._json_response(500, {"ok": False, "error": str(e)})
 
         elif parsed.path == "/api/pause":
             state = read_state()
@@ -316,6 +349,9 @@ class DashboardHandler(http.server.SimpleHTTPRequestHandler):
                     "rsync_bwlimit": "RSYNC_BWLIMIT",
                     "scan_interval": "SCAN_INTERVAL",
                     "dashboard_port": "DASHBOARD_PORT",
+                    "adaptive_resolution": "ADAPTIVE_RESOLUTION",
+                    "resolution_ladder": "RESOLUTION_LADDER",
+                    "min_dest_free_gb": "MIN_DEST_FREE_GB",
                 }
                 mapped = {}
                 for k, v in updates.items():
